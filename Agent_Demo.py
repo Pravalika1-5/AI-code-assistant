@@ -3,6 +3,7 @@ import streamlit as st
 import faiss
 import numpy as np
 from sentence_transformers import SentenceTransformer
+import openai
 import requests
 import json
 
@@ -51,20 +52,36 @@ def search_faiss(query, model):
     return file_paths[indices[0][0]] if indices[0][0] < len(file_paths) else None
 
 
-# -------- LLM Stub --------
-def ask_ollama_llm(file_content, user_question):
-    return "⚠️ Ollama is not available on Streamlit Cloud. Please run this locally for full LLM features."
+# -------- Ask LLM via OpenAI --------
+def ask_openai_llm(file_content, user_question):
+    prompt = f"""Here is the file content:
+
+{file_content}
+
+Now answer this:
+{user_question}
+"""
+    try:
+        openai.api_key = st.secrets["OPENAI_API_KEY"]
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",  # or "gpt-4" if available
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.5,
+        )
+        return response["choices"][0]["message"]["content"]
+    except Exception as e:
+        return f"❌ OpenAI API Error: {str(e)}"
 
 
-# -------- AI Interface --------
+# -------- AI Agent Interaction --------
 def ai_agent_interaction(files_dict):
     st.title("AI Code Assistant 🤖")
-    st.write("Welcome! Ask me questions about your repo (LLM not active on cloud).")
+    st.write("Welcome! Ask me questions about your repo using OpenAI GPT.")
 
     menu = st.radio("Choose a task", ["Search Files", "Review Code", "Generate Test Cases", "Generate Code Summary"])
 
     if menu == "Search Files":
-        query = st.text_input("Search the repo (e.g., 'Controller')")
+        query = st.text_input("Search something in the repository")
         if query and st.button("🔍 Search"):
             model = SentenceTransformer('all-MiniLM-L6-v2')
             best_match = search_faiss(query, model)
@@ -78,12 +95,12 @@ def ai_agent_interaction(files_dict):
         selected_file = st.selectbox("Select a file:", list(files_dict.keys()))
         if selected_file:
             prompt_map = {
-                "Review Code": "Analyze and provide a detailed review.",
-                "Generate Test Cases": "Generate JUnit test cases.",
-                "Generate Code Summary": "Give a high-level summary.",
+                "Review Code": "Analyze and provide a detailed review of this code.",
+                "Generate Test Cases": "Generate JUnit test cases for this code.",
+                "Generate Code Summary": "Give a high-level summary of this code.",
             }
             st.write(f"Processing `{selected_file}`...")
-            output = ask_ollama_llm(files_dict[selected_file], prompt_map[menu])
+            output = ask_openai_llm(files_dict[selected_file], prompt_map[menu])
             st.write(output)
 
 
