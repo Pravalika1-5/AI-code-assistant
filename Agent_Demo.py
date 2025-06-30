@@ -1,22 +1,22 @@
 import os
 import streamlit as st
-import chromadb
+import faiss
+import numpy as np
 from sentence_transformers import SentenceTransformer
 import requests
 import json
 
-# CONFIG
+# -------- CONFIG --------
 DEFAULT_REPO_URL = "https://github.com/parimienosh/Patient-Registration.git"
 CLONE_DIR = "./cloned_repo"
-DB_NAME = "chroma_repo_db"
 
-# Use in-memory ChromaDB (works on Streamlit Cloud)
-chroma_client = chromadb.Client()
-collection = chroma_client.get_or_create_collection(name="repo_files")
+# In-memory storage
+file_paths = []
+embedding_matrix = None
+faiss_index = None
 
 
-# -------- Read Static Files from Repo --------
-# Instead of cloning, just read files from the current directory or skip
+# -------- Read Files --------
 def read_all_files(repo_path):
     file_data = {}
     for root, _, files in os.walk(repo_path):
@@ -31,35 +31,43 @@ def read_all_files(repo_path):
     return file_data
 
 
-def create_chroma_index(files_dict, model):
-    for path, content in files_dict.items():
-        embedding = model.encode(content).tolist()
-        collection.add(ids=[path], embeddings=[embedding], metadatas=[{"path": path}])
+# -------- Create FAISS Index --------
+def create_faiss_index(files_dict, model):
+    global file_paths, embedding_matrix, faiss_index
+    file_paths = list(files_dict.keys())
+    embeddings = [model.encode(files_dict[path]) for path in file_paths]
+    embedding_matrix = np.vstack(embeddings).astype("float32")
+
+    faiss_index = faiss.IndexFlatL2(embedding_matrix.shape[1])
+    faiss_index.add(embedding_matrix)
 
 
-def search_chroma(query, model):
-    query_embedding = model.encode(query).tolist()
-    results = collection.query(query_embeddings=[query_embedding], n_results=1)
-    if results and results["ids"] and results["ids"][0]:
-        return results["ids"][0][0]
-    return None
+# -------- Search --------
+def search_faiss(query, model):
+    if faiss_index is None:
+        return None
+    query_vec = model.encode(query).astype("float32").reshape(1, -1)
+    distances, indices = faiss_index.search(query_vec, k=1)
+    return file_paths[indices[0][0]] if indices[0][0] < len(file_paths) else None
 
 
+# -------- LLM Stub --------
 def ask_ollama_llm(file_content, user_question):
     return "⚠️ Ollama is not available on Streamlit Cloud. Please run this locally for full LLM features."
 
 
+# -------- AI Interface --------
 def ai_agent_interaction(files_dict):
     st.title("AI Code Assistant 🤖")
-    st.write("Welcome! I am your AI Code Assistant.")
+    st.write("Welcome! Ask me questions about your repo (LLM not active on cloud).")
 
     menu = st.radio("Choose a task", ["Search Files", "Review Code", "Generate Test Cases", "Generate Code Summary"])
 
     if menu == "Search Files":
-        query = st.text_input("Search something in the repository")
+        query = st.text_input("Search the repo (e.g., 'Controller')")
         if query and st.button("🔍 Search"):
             model = SentenceTransformer('all-MiniLM-L6-v2')
-            best_match = search_chroma(query, model)
+            best_match = search_faiss(query, model)
             if best_match:
                 st.session_state["selected_file"] = best_match
                 st.session_state["selected_content"] = files_dict[best_match]
@@ -79,15 +87,12 @@ def ai_agent_interaction(files_dict):
             st.write(output)
 
 
-# Streamlit UI
+# -------- Streamlit UI --------
 st.set_page_config(page_title="AI Code Assistant", layout="wide")
 
-st.info("This demo reads repo files and helps analyze them. LLM functionality works locally only.")
 model = SentenceTransformer('all-MiniLM-L6-v2')
-
-# Read files only from a limited local folder (safe on Streamlit Cloud)
 files_dict = read_all_files(".")
-if not collection.count():
-    create_chroma_index(files_dict, model)
+if files_dict and (embedding_matrix is None or faiss_index is None):
+    create_faiss_index(files_dict, model)
 
 ai_agent_interaction(files_dict)
