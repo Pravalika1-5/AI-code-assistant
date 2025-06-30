@@ -5,3 +5,4 @@ gitpython
 requests
 protobuf==4.21.12
 numpy==1.24.4
+setuptools<=67.7.2
