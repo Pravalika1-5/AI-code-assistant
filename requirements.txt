@@ -1,5 +1,6 @@
 streamlit
-chromadb
+chromadb==0.4.24
+protobuf==4.21.12
 sentence-transformers
 gitpython
 requests
